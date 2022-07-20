@@ -14,7 +14,7 @@ GPU_DEVICES=${2:-"all"}
 # Install dependencies
 pip install transformers datasets
 pip install coloredlogs absl-py rouge_score seqeval scipy sacrebleu nltk sklearn parameterized
-pip install fairscale deepspeed mpi4py
+pip install fairscale deepspeed mpi4py accelerate
 pip install --upgrade protobuf==3.20.1
 # pip install optuna ray sigopt wandb # Hyper parameter search
 
