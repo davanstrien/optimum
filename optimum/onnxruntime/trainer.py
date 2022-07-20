@@ -47,8 +47,6 @@ from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
 from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
 from transformers.dependency_versions_check import dep_version_check
 from transformers.file_utils import (
-    CONFIG_NAME,
-    WEIGHTS_NAME,
     is_apex_available,
     is_sagemaker_dp_enabled,
     is_sagemaker_mp_enabled,
@@ -87,7 +85,7 @@ from transformers.trainer_utils import (
     speed_metrics,
 )
 from transformers.training_args import TrainingArguments
-from transformers.utils import logging
+from transformers.utils import check_min_version, logging
 
 import onnxruntime
 
@@ -109,6 +107,9 @@ if is_fairscale_available():
 
 if TYPE_CHECKING:
     import optuna
+
+# Check transformers version
+check_min_version("4.21.0.dev0")
 
 logger = logging.get_logger(__name__)
 
@@ -804,29 +805,7 @@ class ORTTrainer(Trainer):
 
         prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else args.prediction_loss_only
 
-        # if eval is called w/o train init deepspeed here
-        if args.deepspeed and not self.deepspeed:
-
-            # XXX: eval doesn't have `resume_from_checkpoint` arg but we should be able to do eval
-            # from the checkpoint eventually
-            deepspeed_engine, _, _ = deepspeed_init(
-                self, num_training_steps=0, resume_from_checkpoint=None, inference=True
-            )
-            self.model = deepspeed_engine.module
-            self.model_wrapped = deepspeed_engine
-            self.deepspeed = deepspeed_engine
-
-        model = self._wrap_model(self.model, training=False, dataloader=dataloader)
-
-        # if full fp16 or bf16 eval is wanted and this ``evaluation`` or ``predict`` isn't called
-        # while ``train`` is running, cast it to the right dtype first and then put on device
-        if not self.is_in_train:
-            if args.fp16_full_eval:
-                model = model.to(dtype=torch.float16, device=args.device)
-            elif args.bf16_full_eval:
-                model = model.to(dtype=torch.bfloat16, device=args.device)
-
-        batch_size = self.args.eval_batch_size
+        batch_size = dataloader.batch_size
 
         logger.info(f"***** Running {description} *****")
         if has_length(dataloader):
@@ -834,8 +813,6 @@ class ORTTrainer(Trainer):
         else:
             logger.info("  Num examples: Unknown")
         logger.info(f"  Batch size = {batch_size}")
-
-        model.eval()
 
         self.callback_handler.eval_dataloader = dataloader
         # Do this before wrapping.
@@ -871,9 +848,9 @@ class ORTTrainer(Trainer):
 
             # Prediction step(send also onnxruntime inference session)
             loss, logits, labels = self.prediction_step_ort(
-                model, self.infer_sess, inputs, prediction_loss_only, ignore_keys=ignore_keys
+                self.infer_sess, inputs, prediction_loss_only, ignore_keys=ignore_keys
             )
-            inputs_decode = inputs["input_ids"] if args.include_inputs_for_metrics else None
+            inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
 
             # Update containers on host
             if loss is not None:
@@ -1041,7 +1018,6 @@ class ORTTrainer(Trainer):
             fix_atenops_to_gather(self.onnx_model_path)
             logger.info("[INFO] ONNX model is stored in:\n", self.onnx_model_path)
 
-        # Can't infer the exported onnx models due to impatible opset
         self.infer_sess = onnxruntime.InferenceSession(
             self.onnx_model_path,
             session_options=self.session_options,
@@ -1054,30 +1030,6 @@ class ORTTrainer(Trainer):
             raise ValueError("dataloader must implement a working __len__")
 
         prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else args.prediction_loss_only
-
-        # if eval is called w/o train init deepspeed here
-        if args.deepspeed and not self.deepspeed:
-            # XXX: eval doesn't have `resume_from_checkpoint` arg but we should be able to do eval
-            # from the checkpoint eventually
-            deepspeed_engine, _, _ = deepspeed_init(self, num_training_steps=0, resume_from_checkpoint=None)
-            self.model = deepspeed_engine.module
-            self.model_wrapped = deepspeed_engine
-            self.deepspeed = deepspeed_engine
-            # XXX: we don't need optim/sched for inference, but this needs to be sorted out, since
-            # for example the Z3-optimizer is a must for zero3 to work even for inference - what we
-            # don't need is the deepspeed basic optimizer which is self.optimizer.optimizer
-            deepspeed_engine.optimizer.optimizer = None
-            deepspeed_engine.lr_scheduler = None
-
-        model = self._wrap_model(self.model, training=False, dataloader=dataloader)
-
-        # if full fp16 or bf16 eval is wanted and this ``evaluation`` or ``predict`` isn't called
-        # while ``train`` is running, cast it to the right dtype first and then put on device
-        if not self.is_in_train:
-            if args.fp16_full_eval:
-                model = model.to(dtype=torch.float16, device=args.device)
-            elif args.bf16_full_eval:
-                model = model.to(dtype=torch.bfloat16, device=args.device)
 
         batch_size = dataloader.batch_size
         num_examples = self.num_examples(dataloader)
@@ -1102,8 +1054,6 @@ class ORTTrainer(Trainer):
             labels_gatherer = DistributedTensorGatherer(world_size, num_examples, make_multiple_of=make_multiple_of)
             inputs_gatherer = DistributedTensorGatherer(world_size, num_examples, make_multiple_of=make_multiple_of)
 
-        model.eval()
-
         if args.past_index >= 0:
             self._past = None
 
@@ -1111,9 +1061,9 @@ class ORTTrainer(Trainer):
 
         for step, inputs in enumerate(dataloader):
             loss, logits, labels = self.prediction_step_ort(
-                model, self.infer_sess, inputs, prediction_loss_only, ignore_keys=ignore_keys
+                self.infer_sess, inputs, prediction_loss_only, ignore_keys=ignore_keys
             )
-            inputs_decode = inputs["input_ids"] if args.include_inputs_for_metrics else None
+            inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
 
             if loss is not None:
                 loss = loss.to(args.device)
@@ -1185,7 +1135,6 @@ class ORTTrainer(Trainer):
 
     def prediction_step_ort(
         self,
-        model: nn.Module,
         infer_sess: onnxruntime.InferenceSession,
         inputs: Dict[str, Union[torch.Tensor, Any]],
         prediction_loss_only: bool,
@@ -1219,9 +1168,7 @@ class ORTTrainer(Trainer):
             else:
                 if has_labels:
                     with self.compute_loss_context_manager():
-                        loss, outputs = self.compute_loss_ort(
-                            model, inputs, input_names, output_names, return_outputs=True
-                        )
+                        loss, outputs = self.compute_loss_ort(inputs, input_names, output_names, return_outputs=True)
                         loss = torch.tensor(loss).mean()
 
                     if isinstance(outputs, dict):
@@ -1256,7 +1203,7 @@ class ORTTrainer(Trainer):
 
         return (loss, logits, labels)
 
-    def compute_loss_ort(self, model, inputs, input_names, output_names, return_outputs=False):
+    def compute_loss_ort(self, inputs, input_names, output_names, return_outputs=False):
         """
         How the loss is computed by Trainer. By default, all models return the loss in the first element.
         Subclass and override for custom behavior.
