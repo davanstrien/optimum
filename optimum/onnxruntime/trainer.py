@@ -99,12 +99,8 @@ if is_apex_available():
 
 if is_fairscale_available():
     dep_version_check("fairscale")
-    import fairscale
-    from fairscale.nn.data_parallel import FullyShardedDataParallel as FullyShardedDDP
     from fairscale.nn.data_parallel import ShardedDataParallel as ShardedDDP
-    from fairscale.nn.wrap import auto_wrap
     from fairscale.optim import OSS
-    from fairscale.optim.grad_scaler import ShardedGradScaler
 
 if TYPE_CHECKING:
     import optuna
