@@ -53,6 +53,7 @@ from transformers.file_utils import (
     is_torch_tpu_available,
 )
 from transformers.modeling_utils import PreTrainedModel, unwrap_model
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 from transformers.onnx import export
 from transformers.onnx.features import FeaturesManager
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -107,7 +108,7 @@ if TYPE_CHECKING:
     import optuna
 
 # Check transformers version
-check_min_version("4.21.0.dev0")
+check_min_version("4.21.0")
 
 logger = logging.get_logger(__name__)
 
@@ -637,6 +638,7 @@ class ORTTrainer(Trainer):
         """
         Run evaluation within ONNX Runtime or PyTorch backend and returns metrics.(Overriden from `Trainer.evaluate()`)
         """
+        print(unwrap_model(self.model)._get_name())
         # memory metrics - must set up as early as possible
         self._memory_tracker.start()
 
@@ -1224,8 +1226,16 @@ class ORTTrainer(Trainer):
             self._past = outputs[self.args.past_index]
 
         if labels is not None:
-            loss = self.label_smoother(outputs, labels)
+            if unwrap_model(self.model)._get_name() in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+                loss = self.label_smoother(outputs, labels, shift_labels=True)
+            else:
+                loss = self.label_smoother(outputs, labels)
         else:
+            if isinstance(outputs, dict) and "loss" not in outputs:
+                raise ValueError(
+                    "The model did not return a loss from the inputs, only the following keys: "
+                    f"{','.join(outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
+                )
             # Loss is by default the first element in the outputs
             loss = outputs[0]
 
