@@ -12,6 +12,8 @@ GPU_DEVICES=${2:-"all"}
 # docker run -it --rm -p 80:8888 --gpus $GPU_DEVICES ort9/cu11:latest $CMD
 
 # Install dependencies
+pip install -U pip
+pip install pygit2 pgzip
 pip install transformers datasets
 pip install coloredlogs absl-py rouge_score seqeval scipy sacrebleu nltk sklearn parameterized
 pip install fairscale deepspeed mpi4py accelerate
