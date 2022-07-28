@@ -16,7 +16,7 @@ pip install -U pip
 pip install pygit2 pgzip
 pip install transformers datasets accelerate
 pip install coloredlogs absl-py rouge_score seqeval scipy sacrebleu nltk sklearn parameterized
-pip install fairscale deepspeed mpi4py accelerate
+pip install fairscale deepspeed mpi4py
 pip install --upgrade protobuf==3.20.1
 # pip install optuna ray sigopt wandb # Hyper parameter search
 
