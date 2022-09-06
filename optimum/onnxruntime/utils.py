@@ -72,6 +72,7 @@ class ORTConfigManager:
         "gpt2": ("n_head", "n_embd", "gpt2"),
         "gpt_neo": ("num_heads", "hidden_size", "gpt2"),
         "xlm-roberta": ("num_attention_heads", "hidden_size", "bert"),
+         "vit": ("num_attention_heads", "hidden_size", "vit"),
     }
 
     @classmethod
